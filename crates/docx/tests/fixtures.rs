@@ -2830,3 +2830,38 @@ fn row_table_borders_round_trip() {
     let again = wordcraft_docx::read(&saved).unwrap();
     assert_eq!(d.body, again.body);
 }
+
+/// #2363: floating objects keep their stacking order (`relativeHeight`, VML `z-index`), so a
+/// band anchored after the text box on it can stay under it; a save keeps the order.
+#[test]
+fn floating_objects_keep_their_stacking_order() {
+    let wsp = |name: &str, z: &str| {
+        format!(
+            r#"<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{z}" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>9514205</wp:posOffset></wp:positionV><wp:extent cx="7524750" cy="1148715"/><wp:wrapNone/><wp:docPr id="1" name="{name}"/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="A47ABB"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#
+        )
+    };
+    let vml = |z: &str| {
+        format!(
+            r#"<w:r><w:pict><v:rect style="position:absolute;margin-left:0;margin-top:0;width:10pt;height:10pt{z}" fillcolor="red"/></w:pict></w:r>"#
+        )
+    };
+    let body = format!(
+        "<w:p>{}{}{}{}{}{}</w:p>",
+        wsp("Text Box 2", "251658242"),
+        wsp("Rectangle 2", "251658241"),
+        vml(";z-index:7"),
+        vml(""),
+        wsp("Negative", "-5"),
+        wsp("Huge", "99999999999999"),
+    );
+    let order = |d: &Document| paras(d)[0].objects.iter().map(|o| o.frame().and_then(|(_, _, f)| f.z)).collect::<Vec<_>>();
+    let d = read_body(&body);
+    let max = i64::from(u32::MAX);
+    assert_eq!(order(&d), [Some(251_658_242), Some(251_658_241), Some(7), None, Some(0), Some(max)]);
+    let again = order(&wordcraft_docx::read(&wordcraft_docx::write(&d).unwrap()).unwrap());
+    assert_eq!(again.get(..3), Some(&[Some(251_658_242), Some(251_658_241), Some(7)][..]), "{again:?}");
+    assert_eq!(again.get(4..), Some(&[Some(0), Some(max)][..]), "{again:?}");
+    // Orders rising in document order say no more than it (objects without one are saved so).
+    let rising = read_body(&format!("<w:p>{}{}</w:p>", wsp("A", "251658241"), wsp("B", "251658242")));
+    assert_eq!(order(&rising), [None, None]);
+}

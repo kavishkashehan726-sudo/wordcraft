@@ -178,3 +178,50 @@ fn own_margins_and_resize_to_fit_keep_the_text_in_view() {
     let (shown, ..) = two(20.0, TextBody { inset: Some([u32::MAX; 4]), ..Default::default() });
     assert!(shown >= 1);
 }
+
+/// #2363: a page-wide band anchored after the text box on it (lower `relativeHeight`, later in
+/// the paragraph) covered the box's white text. Floating objects stack by their order, not by
+/// where they are in the paragraph; without one they keep document order.
+#[test]
+fn floating_objects_stack_by_their_order_not_their_place_in_the_paragraph() {
+    let band = Rgb(0xA4, 0x7A, 0xBB);
+    let at =
+        |z: Option<i64>| Float { wrap: Wrap::InFrontOfText, h_rel: Anchor::Page, v_rel: Anchor::Page, x: 0.0, y: 700.0, z, ..Default::default() };
+    // (text box order, band order) → is the text drawn over the band?
+    let text_on_top = |box_z: Option<i64>, band_z: Option<i64>| {
+        let mut d = Document::from_text("x");
+        let id = text_box(&mut d, 0, "www.example.org", 595.0, 36.0, TextBody::default());
+        let rect = InlineObject::Shape {
+            kind: wordcraft_doc::para::ShapeKind::Rectangle,
+            w: 595.0,
+            h: 90.0,
+            fill: Some(band),
+            stroke: None,
+            stroke_width: 1.0,
+            float: at(band_z),
+            story: None,
+            effects: Default::default(),
+            freeform: None,
+            extra: Default::default(),
+        };
+        for o in d.para_mut(StoryRef::Body, &Path::top(0)).unwrap().objects.iter_mut() {
+            if let InlineObject::Shape { float, .. } = o {
+                *float = at(box_z);
+            }
+        }
+        let off = d.para(StoryRef::Body, &Path::top(0)).map_or(0, |p| p.len());
+        d.insert_object(&Pos::body(0, off), rect, &Default::default()).unwrap();
+        let l = lay(&d);
+        let items = &l.pages[0].items;
+        let fill = items.iter().position(|it| matches!(it, Placed::Shape { fill: Some(c), .. } if *c == band)).unwrap();
+        let text = items.iter().position(|it| matches!(it, Placed::Lines { story: StoryRef::Part(s), .. } if *s == id)).unwrap();
+        // The topmost object is hit first, as it's drawn.
+        let hit = l.find_object(0, |o| o.rect.contains(Point::new(300.0, 710.0))).unwrap();
+        assert_eq!(hit.text_box.is_some(), text > fill, "{box_z:?} {band_z:?}");
+        text > fill
+    };
+    assert!(text_on_top(Some(251_658_242), Some(251_658_241)), "Word's file: the box is above the band");
+    assert!(!text_on_top(Some(1), Some(2)), "a band ordered above the box covers it");
+    assert!(!text_on_top(None, None), "no order: document order, the later band on top");
+    assert!(!text_on_top(Some(5), None), "a band with no order of its own goes just above the box before it");
+}
