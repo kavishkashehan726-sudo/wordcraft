@@ -216,6 +216,11 @@ pub struct Float {
     /// laid out, as Word for Windows does (Word for Mac draws hidden VML shapes).
     #[serde(skip_serializing_if = "is_false")]
     pub hidden: bool,
+    /// Stacking order among floating objects (`wp:anchor/@relativeHeight`, VML `z-index`): in the
+    /// same layer (behind or in front of the text), a higher one is drawn over a lower one. `None`
+    /// stacks it in document order, just above the floating object before it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub z: Option<i64>,
 }
 
 /// Longest alternative text kept (characters): hostile files and commands are capped.

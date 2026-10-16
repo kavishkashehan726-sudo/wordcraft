@@ -298,6 +298,7 @@ pub(crate) fn read_opened(pkg: &Package) -> Result<Document, DocxError> {
     if r.shape_ids {
         keep_glued_ids(&mut r.doc, &r.glued);
     }
+    drop_document_order(&mut r.doc);
     let mut doc = r.doc;
     doc.ensure_nonempty();
     Ok(doc)
@@ -373,6 +374,27 @@ impl Reader<'_> {
         for r in &mut self.doc.revisions {
             if r.move_name.as_ref().is_some_and(|n| !ok.contains(n)) {
                 r.move_name = None;
+            }
+        }
+    }
+}
+
+/// Forget the stacking orders ([`wordcraft_doc::para::Float::z`]) of a story whose floating
+/// objects' orders rise in document order: they say nothing document order doesn't (it's how
+/// objects without one are saved), so a document reads back as it was saved.
+fn drop_document_order(doc: &mut Document) {
+    use wordcraft_doc::StoryRef;
+    let stories: Vec<StoryRef> = std::iter::once(StoryRef::Body).chain(doc.parts.keys().map(|&id| StoryRef::Part(id))).collect();
+    for story in stories {
+        let orders = |p: &Paragraph| p.objects.iter().filter_map(|o| o.frame()?.2.z).collect::<Vec<i64>>();
+        let paths: Vec<_> = doc.para_paths(story).into_iter().filter(|p| doc.para(story, p).is_some_and(|p| !orders(p).is_empty())).collect();
+        let zs: Vec<i64> = paths.iter().filter_map(|p| doc.para(story, p)).flat_map(orders).collect();
+        if !zs.windows(2).all(|w| matches!(w, [a, b] if a < b)) {
+            continue;
+        }
+        for p in &paths {
+            if let Ok(p) = doc.para_mut(story, p) {
+                p.objects.iter_mut().filter_map(InlineObject::float_mut).for_each(|f| f.z = None);
             }
         }
     }

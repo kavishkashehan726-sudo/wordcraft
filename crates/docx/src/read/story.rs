@@ -1732,6 +1732,9 @@ fn anchor_float(c: &El) -> Float {
     f.dist = dist("distL").max(dist("distR"));
     f.dist_top = dist("distT");
     f.dist_bottom = dist("distB");
+    // Stacking order (an `xsd:unsignedInt`): the band a text box sits on comes later in the file
+    // but lower in the stack (#2363).
+    f.z = c.attr("relativeHeight").and_then(int).map(|z| z.clamp(0, i64::from(u32::MAX)));
     f
 }
 
@@ -1792,7 +1795,7 @@ fn vml_style<'a>(style: &'a str, key: &str) -> Option<&'a str> {
 /// `mso-position-horizontal-relative` / `mso-position-vertical-relative` (unless aligned with
 /// `mso-position-horizontal` / `mso-position-vertical`), wrapped as its `w10:wrap` says. Without
 /// wrapping (`none`, or no `w10:wrap`) it's in front of the text, or behind it at a negative
-/// `z-index`. Anything else stays inline.
+/// `z-index`, which also stacks it among the other floating objects. Anything else stays inline.
 fn vml_float(shape: &El, style: &str) -> Float {
     let get = |k: &str| vml_style(style, k);
     let hidden = get("visibility").is_some_and(|v| v.eq_ignore_ascii_case("hidden"));
@@ -1846,6 +1849,7 @@ fn vml_float(shape: &El, style: &str) -> Float {
         dist_top: dist("mso-wrap-distance-top"),
         dist_bottom: dist("mso-wrap-distance-bottom"),
         hidden,
+        z: get("z-index").and_then(int).map(|z| z.clamp(-i64::from(u32::MAX), i64::from(u32::MAX))),
         ..Float::default()
     };
     f.set_spin(vml_spin(style));
